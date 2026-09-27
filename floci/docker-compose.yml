@@ -1,0 +1,122 @@
+# docker-compose.yml — Ton "AWS local" pour la formation
+#
+# Démarrer :  docker compose up -d
+# Vérifier :  curl http://localhost:4566/health
+# Arrêter  :  docker compose down
+#
+# Floci est un ÉMULATEUR AWS : un programme qui imite le comportement d'AWS
+# sur ta machine. Tes commandes `aws`, ton code Python et ton Terraform lui
+# parlent exactement comme ils parleraient au vrai AWS — sans compte, sans
+# carte bancaire, et sans risque de facture.
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # 1. Le passe-plat vers Docker
+  # ─────────────────────────────────────────────────────────────────────────
+  # Pourquoi ce service ?
+  # Pour émuler EC2 et RDS, Floci a besoin de LANCER de vrais containers
+  # (une instance EC2 émulée = un container Ubuntu, une base RDS = un vrai
+  # PostgreSQL). Pour ça, il doit pouvoir parler au Docker de ta machine.
+  #
+  # On lui donne accès via `socat`, un petit utilitaire qui fait le passe-plat
+  # entre une adresse réseau (tcp://...:2375) et le fichier socket de Docker
+  # (/var/run/docker.sock). Sans lui, Floci n'arrive pas à joindre Docker sur
+  # certaines installations (notamment Docker Desktop sur Mac).
+  #
+  # ⚠️  Sécurité — à retenir pour tes entretiens :
+  # Donner accès au socket Docker, c'est donner les pleins pouvoirs sur la
+  # machine (celui qui peut créer un container peut tout lire). Ici c'est sans
+  # risque : le port 2375 n'est PAS publié vers l'extérieur (aucune ligne
+  # `ports:` ci-dessous), il n'est joignable que par Floci, dans le réseau
+  # privé créé par Docker Compose. En production, on ne fait JAMAIS ça.
+  dockerproxy:
+    image: alpine/socat:1.8.0.0
+    container_name: floci-dockerproxy
+    command: TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    user: root
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 2. Floci — l'émulateur AWS lui-même
+  # ─────────────────────────────────────────────────────────────────────────
+  floci:
+    # On fige la version au lieu d'utiliser `latest`.
+    # Pourquoi ? Avec `latest`, ton environnement peut changer du jour au
+    # lendemain sans que tu aies rien fait, et les commandes du cours peuvent
+    # cesser de marcher. Figer une version = résultats reproductibles.
+    # C'est une règle générale : en production, on ne déploie jamais `latest`.
+    #
+    # Le suffixe `-compat` : c'est la même image, mais avec l'AWS CLI installée
+    # dedans. On en a besoin parce que nos scripts d'initialisation (init/ready.d/)
+    # utilisent la commande `aws`. L'image sans suffixe ne la contient pas.
+    image: floci/floci:1.7.0-compat
+    container_name: floci
+    restart: unless-stopped
+
+    ports:
+      # 4566 = LE port d'AWS. Tous les services (S3, SQS, EC2...) passent par
+      # ce seul port, exactement comme le fait le vrai AWS avec ses URLs.
+      - "4566:4566"
+
+      # 9169 = IMDS (Instance Metadata Service). C'est le service que les
+      # instances EC2 interrogent pour savoir "qui suis-je ?" (leur id, leur
+      # rôle IAM). Sur une vraie EC2 on l'appelle sur 169.254.169.254.
+      - "9169:9169"
+
+      # 7001-7010 = les ports par lesquels Floci expose les bases de données
+      # qu'il crée (RDS). Sans ça, tu ne pourrais pas t'y connecter avec psql
+      # depuis ta machine.
+      - "7001-7010:7001-7010"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Les scripts déposés ici sont exécutés automatiquement au démarrage,
+      # une fois que Floci est prêt. On s'en sert pour créer d'avance le
+      # bucket et la file dont le projet a besoin (voir init/ready.d/).
+      - ./init/ready.d:/etc/floci/init/ready.d:ro
+
+    user: root
+
+    environment:
+      # Où Floci trouve Docker (le passe-plat défini au-dessus).
+      DOCKER_HOST: tcp://floci-dockerproxy:2375
+
+      # Comment Floci stocke les données :
+      #   memory     → tout en RAM, TOUT EST PERDU à l'arrêt du container
+      #   persistent → écrit sur disque à chaque modification (survit à un `down`)
+      #   hybrid     → en RAM, écrit sur disque toutes les 5 secondes
+      #
+      # On choisit `memory` pour la formation : chaque `docker compose down`
+      # te rend un AWS tout neuf. Tu peux tout casser sans conséquence — c'est
+      # exactement ce qu'on veut pour apprendre.
+      FLOCI_STORAGE_MODE: memory
+
+      # Le nom sous lequel les AUTRES containers joignent Floci.
+      # Depuis ta machine        → http://localhost:4566
+      # Depuis un autre container → http://floci:4566
+      # (Rappel du Module 3 : dans un réseau Docker, les services se trouvent
+      #  par leur nom, pas par "localhost" — "localhost" dans un container
+      #  désigne le container lui-même.)
+      FLOCI_HOSTNAME: floci
+
+    depends_on:
+      - dockerproxy
+
+    healthcheck:
+      # Docker interroge cette URL pour savoir si Floci est VRAIMENT prêt.
+      # "Le container tourne" ≠ "le service répond" : un programme met souvent
+      # quelques secondes à démarrer. C'est la différence que teste un healthcheck.
+      test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+# Un réseau nommé explicitement, pour que le projet fil rouge puisse s'y
+# raccrocher et joindre Floci par son nom (voir docker-compose.floci.yml).
+networks:
+  default:
+    name: floci-net

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / Bun
+node_modules/
+dist/
+
+# Environment variables (SECRETS!)
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Terraform (si on en met ici plus tard)
+*.tfstate
+*.tfstate.backup
+.terraform/

@@ -1,0 +1,57 @@
+# docker-compose.yml — Lance tous les services du projet ensemble
+# Commande : docker compose up -d --build
+# Docker Compose crée automatiquement un réseau : les services se trouvent par leur nom
+
+services:
+  # --- Backend (API Python FastAPI) ---
+  backend:
+    build: ./backend                    # Construit l'image depuis backend/Dockerfile
+    ports:
+      - "8000:8000"                     # Port machine:port container
+    depends_on:
+      db:
+        # ⚠️ Piège classique : `depends_on: [db]` tout seul attend seulement que
+        # le container PostgreSQL soit LANCÉ — pas qu'il soit PRÊT à répondre.
+        # Or PostgreSQL met 1 à 3 secondes à démarrer. Résultat : le backend
+        # essaie de se connecter trop tôt et crashe au démarrage.
+        #
+        # `condition: service_healthy` attend que le healthcheck du service `db`
+        # (défini plus bas) passe au vert. C'est la bonne façon de faire.
+        condition: service_healthy
+    environment:
+      # Cette variable active le mode PostgreSQL dans main.py
+      # Sans elle, le backend utilise le stockage in-memory
+      - DATABASE_URL=postgresql://user:pass@db:5432/tasks
+      #                                    ^^
+      #                        "db" = le nom du service ci-dessous
+      #                        Docker le traduit en IP automatiquement
+
+  # --- Frontend (React servi par nginx) ---
+  frontend:
+    build: ./frontend                   # Construit l'image depuis frontend/Dockerfile
+    ports:
+      - "80:80"                         # Accessible sur http://localhost
+    depends_on:
+      - backend
+
+  # --- Base de données PostgreSQL ---
+  db:
+    image: postgres:16                  # Image officielle, pas besoin de Dockerfile
+    environment:
+      - POSTGRES_USER=user             # Utilisateur de la base
+      - POSTGRES_PASSWORD=pass         # Mot de passe (en vrai, utiliser un secret !)
+      - POSTGRES_DB=tasks              # Nom de la base créée au démarrage
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Persiste les données entre les redémarrages
+    healthcheck:
+      # `pg_isready` est un petit outil fourni par PostgreSQL qui répond
+      # "oui je suis prêt" ou "non pas encore". Docker le lance en boucle.
+      test: ["CMD-SHELL", "pg_isready -U user -d tasks"]
+      interval: 5s      # relancer le test toutes les 5 secondes
+      timeout: 3s       # si le test met plus de 3s, c'est un échec
+      retries: 10       # après 10 échecs d'affilée, le service est "unhealthy"
+      start_period: 10s # on laisse 10s au démarrage sans compter les échecs
+
+# Volumes nommés — les données persistent même après docker compose down
+volumes:
+  postgres_data:

@@ -1,0 +1,55 @@
+# docker-compose.floci.yml — Brancher l'application sur l'AWS local
+#
+# ─── À QUOI SERT CE FICHIER ───
+#
+# Docker Compose sait empiler plusieurs fichiers : le premier donne la config
+# de base, les suivants la complètent ou l'écrasent. On appelle ça un "override".
+#
+# Ici, le fichier ajoute au backend ce qu'il faut pour qu'il parle à Floci.
+# Le docker-compose.yml principal n'est pas modifié : si tu ne veux pas d'AWS,
+# tu ne charges simplement pas ce fichier.
+#
+# ─── COMMENT L'UTILISER ───
+#
+#   1. Démarre d'abord l'AWS local :
+#        cd floci && docker compose up -d && cd ..
+#
+#   2. Puis l'application, avec les DEUX fichiers :
+#        docker compose -f docker-compose.yml -f docker-compose.floci.yml up -d --build
+#
+#      L'ordre compte : le second fichier complète le premier.
+#
+#   3. Pour revenir au mode normal (sans AWS) :
+#        docker compose up -d --build
+
+services:
+  backend:
+    environment:
+      # ⚠️ Ici c'est bien `floci`, PAS `localhost`.
+      #
+      # Le backend tourne DANS un container. Pour lui, "localhost" désigne
+      # le container lui-même — pas ta machine, et surtout pas Floci.
+      # Dans un réseau Docker, on joint un service par son NOM.
+      #
+      # Depuis ton terminal (sur ta machine) → http://localhost:4566
+      # Depuis un container                  → http://floci:4566
+      #
+      # C'est l'erreur numéro 1 quand on branche deux stacks Docker ensemble.
+      AWS_ENDPOINT_URL: http://floci:4566
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+
+    networks:
+      - default    # le réseau de CE projet (pour parler à `db`)
+      - floci-net  # le réseau de Floci (pour parler à `floci`)
+
+# Un container peut être branché sur PLUSIEURS réseaux à la fois, comme un
+# ordinateur avec le wifi et un câble. Ici le backend a un pied dans chaque.
+networks:
+  floci-net:
+    # `external: true` = "ce réseau existe déjà, ne le crée pas".
+    # Il a été créé par floci/docker-compose.yml. Si tu obtiens l'erreur
+    # `network floci-net declared as external, but could not be found`,
+    # c'est que tu as oublié de démarrer Floci à l'étape 1.
+    external: true
