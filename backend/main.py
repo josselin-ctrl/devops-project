@@ -216,7 +216,14 @@ def toggle_task(task_id: int):
 def delete_task(task_id: int):
     """DELETE /api/tasks/1 → Supprime la tâche 1."""
     _remove_task(task_id)
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: int):
+    tasks = _list_tasks()
+    for t in tasks:
+        if t["id"] == task_id:
+            return t
 
+    raise HTTPException(status_code=404, detail="Task not found")
 
 @app.get("/api/health")
 def health():
